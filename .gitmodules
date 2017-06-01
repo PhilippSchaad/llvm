@@ -1,0 +1,6 @@
+[submodule "tools/clang"]
+	path = tools/clang
+	url = git@github.com:PhilippSchaad/clang.git
+[submodule "tools/polly"]
+	path = tools/polly
+	url = git@github.com:PhilippSchaad/polly.git
