@@ -50,6 +50,7 @@ void llvm::initializeCore(PassRegistry &Registry) {
   initializePrintModulePassWrapperPass(Registry);
   initializePrintFunctionPassWrapperPass(Registry);
   initializePrintBasicBlockPassPass(Registry);
+  initializeSafepointIRVerifierPass(Registry);
   initializeVerifierLegacyPassPass(Registry);
 }
 
@@ -568,6 +569,14 @@ LLVMTypeRef LLVMGetTypeByName(LLVMModuleRef M, const char *Name) {
 
 /*--.. Operations on array, pointer, and vector types (sequence types) .....--*/
 
+void LLVMGetSubtypes(LLVMTypeRef Tp, LLVMTypeRef *Arr) {
+    int i = 0;
+    for (auto *T : unwrap(Tp)->subtypes()) {
+        Arr[i] = wrap(T);
+        i++;
+    }
+}
+
 LLVMTypeRef LLVMArrayType(LLVMTypeRef ElementType, unsigned ElementCount) {
   return wrap(ArrayType::get(unwrap(ElementType), ElementCount));
 }
@@ -585,6 +594,10 @@ LLVMTypeRef LLVMGetElementType(LLVMTypeRef WrappedTy) {
   if (auto *PTy = dyn_cast<PointerType>(Ty))
     return wrap(PTy->getElementType());
   return wrap(cast<SequentialType>(Ty)->getElementType());
+}
+
+unsigned LLVMGetNumContainedTypes(LLVMTypeRef Tp) {
+    return unwrap(Tp)->getNumContainedTypes();
 }
 
 unsigned LLVMGetArrayLength(LLVMTypeRef ArrayTy) {

@@ -127,7 +127,7 @@ bool Constant::isOneValue() const {
 
   // Check for FP which are bitcasted from 1 integers
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(this))
-    return CFP->getValueAPF().bitcastToAPInt() == 1;
+    return CFP->getValueAPF().bitcastToAPInt().isOneValue();
 
   // Check for constant vectors which are splats of 1 values.
   if (const ConstantVector *CV = dyn_cast<ConstantVector>(this))
@@ -512,7 +512,7 @@ ConstantInt *ConstantInt::getFalse(LLVMContext &Context) {
 }
 
 Constant *ConstantInt::getTrue(Type *Ty) {
-  assert(Ty->getScalarType()->isIntegerTy(1) && "Type not i1 or vector of i1.");
+  assert(Ty->isIntOrIntVectorTy(1) && "Type not i1 or vector of i1.");
   ConstantInt *TrueC = ConstantInt::getTrue(Ty->getContext());
   if (auto *VTy = dyn_cast<VectorType>(Ty))
     return ConstantVector::getSplat(VTy->getNumElements(), TrueC);
@@ -520,7 +520,7 @@ Constant *ConstantInt::getTrue(Type *Ty) {
 }
 
 Constant *ConstantInt::getFalse(Type *Ty) {
-  assert(Ty->getScalarType()->isIntegerTy(1) && "Type not i1 or vector of i1.");
+  assert(Ty->isIntOrIntVectorTy(1) && "Type not i1 or vector of i1.");
   ConstantInt *FalseC = ConstantInt::getFalse(Ty->getContext());
   if (auto *VTy = dyn_cast<VectorType>(Ty))
     return ConstantVector::getSplat(VTy->getNumElements(), FalseC);
@@ -716,7 +716,7 @@ bool ConstantFP::isExactlyValue(const APFloat &V) const {
 
 /// Remove the constant from the constant table.
 void ConstantFP::destroyConstantImpl() {
-  llvm_unreachable("You can't ConstantInt->destroyConstantImpl()!");
+  llvm_unreachable("You can't ConstantFP->destroyConstantImpl()!");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1157,21 +1157,14 @@ bool ConstantInt::isValueValidForType(Type *Ty, uint64_t Val) {
   unsigned NumBits = Ty->getIntegerBitWidth(); // assert okay
   if (Ty->isIntegerTy(1))
     return Val == 0 || Val == 1;
-  if (NumBits >= 64)
-    return true; // always true, has to fit in largest type
-  uint64_t Max = (1ll << NumBits) - 1;
-  return Val <= Max;
+  return isUIntN(NumBits, Val);
 }
 
 bool ConstantInt::isValueValidForType(Type *Ty, int64_t Val) {
   unsigned NumBits = Ty->getIntegerBitWidth();
   if (Ty->isIntegerTy(1))
     return Val == 0 || Val == 1 || Val == -1;
-  if (NumBits >= 64)
-    return true; // always true, has to fit in largest type
-  int64_t Min = -(1ll << (NumBits-1));
-  int64_t Max = (1ll << (NumBits-1)) - 1;
-  return (Val >= Min && Val <= Max);
+  return isIntN(NumBits, Val);
 }
 
 bool ConstantFP::isValueValidForType(Type *Ty, const APFloat& Val) {
@@ -1642,9 +1635,9 @@ Constant *ConstantExpr::getFPToSI(Constant *C, Type *Ty, bool OnlyIfReduced) {
 
 Constant *ConstantExpr::getPtrToInt(Constant *C, Type *DstTy,
                                     bool OnlyIfReduced) {
-  assert(C->getType()->getScalarType()->isPointerTy() &&
+  assert(C->getType()->isPtrOrPtrVectorTy() &&
          "PtrToInt source must be pointer or pointer vector");
-  assert(DstTy->getScalarType()->isIntegerTy() && 
+  assert(DstTy->isIntOrIntVectorTy() &&
          "PtrToInt destination must be integer or integer vector");
   assert(isa<VectorType>(C->getType()) == isa<VectorType>(DstTy));
   if (isa<VectorType>(C->getType()))
@@ -1655,9 +1648,9 @@ Constant *ConstantExpr::getPtrToInt(Constant *C, Type *DstTy,
 
 Constant *ConstantExpr::getIntToPtr(Constant *C, Type *DstTy,
                                     bool OnlyIfReduced) {
-  assert(C->getType()->getScalarType()->isIntegerTy() &&
+  assert(C->getType()->isIntOrIntVectorTy() &&
          "IntToPtr source must be integer or integer vector");
-  assert(DstTy->getScalarType()->isPointerTy() &&
+  assert(DstTy->isPtrOrPtrVectorTy() &&
          "IntToPtr destination must be a pointer or pointer vector");
   assert(isa<VectorType>(C->getType()) == isa<VectorType>(DstTy));
   if (isa<VectorType>(C->getType()))
@@ -1921,8 +1914,8 @@ Constant *ConstantExpr::getGetElementPtr(Type *Ty, Constant *C,
 Constant *ConstantExpr::getICmp(unsigned short pred, Constant *LHS,
                                 Constant *RHS, bool OnlyIfReduced) {
   assert(LHS->getType() == RHS->getType());
-  assert(pred >= ICmpInst::FIRST_ICMP_PREDICATE && 
-         pred <= ICmpInst::LAST_ICMP_PREDICATE && "Invalid ICmp Predicate");
+  assert(CmpInst::isIntPredicate((CmpInst::Predicate)pred) &&
+         "Invalid ICmp Predicate");
 
   if (Constant *FC = ConstantFoldCompareInstruction(pred, LHS, RHS))
     return FC;          // Fold a few common cases...
@@ -1946,7 +1939,8 @@ Constant *ConstantExpr::getICmp(unsigned short pred, Constant *LHS,
 Constant *ConstantExpr::getFCmp(unsigned short pred, Constant *LHS,
                                 Constant *RHS, bool OnlyIfReduced) {
   assert(LHS->getType() == RHS->getType());
-  assert(pred <= FCmpInst::LAST_FCMP_PREDICATE && "Invalid FCmp Predicate");
+  assert(CmpInst::isFPPredicate((CmpInst::Predicate)pred) &&
+         "Invalid FCmp Predicate");
 
   if (Constant *FC = ConstantFoldCompareInstruction(pred, LHS, RHS))
     return FC;          // Fold a few common cases...

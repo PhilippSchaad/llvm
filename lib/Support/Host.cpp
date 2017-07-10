@@ -327,6 +327,7 @@ enum ProcessorSubtypes {
   INTEL_COREI7_SKYLAKE_AVX512,
   INTEL_ATOM_BONNELL,
   INTEL_ATOM_SILVERMONT,
+  INTEL_ATOM_GOLDMONT,
   INTEL_KNIGHTS_LANDING,
   AMDPENTIUM_K6,
   AMDPENTIUM_K62,
@@ -405,7 +406,6 @@ static bool isCpuIdSupported() {
 /// the specified arguments.  If we can't run cpuid on the host, return true.
 static bool getX86CpuIDAndInfo(unsigned value, unsigned *rEAX, unsigned *rEBX,
                                unsigned *rECX, unsigned *rEDX) {
-#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
 #if defined(__GNUC__) || defined(__clang__)
 #if defined(__x86_64__)
   // gcc doesn't know cpuid would clobber ebx/rbx. Preserve it manually.
@@ -415,14 +415,16 @@ static bool getX86CpuIDAndInfo(unsigned value, unsigned *rEAX, unsigned *rEBX,
           "xchgq\t%%rbx, %%rsi\n\t"
           : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
           : "a"(value));
+  return false;
 #elif defined(__i386__)
   __asm__("movl\t%%ebx, %%esi\n\t"
           "cpuid\n\t"
           "xchgl\t%%ebx, %%esi\n\t"
           : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
           : "a"(value));
+  return false;
 #else
-  assert(0 && "This method is defined only for x86.");
+  return true;
 #endif
 #elif defined(_MSC_VER)
   // The MSVC intrinsic is portable across x86 and x64.
@@ -432,7 +434,6 @@ static bool getX86CpuIDAndInfo(unsigned value, unsigned *rEAX, unsigned *rEBX,
   *rEBX = registers[1];
   *rECX = registers[2];
   *rEDX = registers[3];
-#endif
   return false;
 #else
   return true;
@@ -445,16 +446,16 @@ static bool getX86CpuIDAndInfo(unsigned value, unsigned *rEAX, unsigned *rEBX,
 static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
                                  unsigned *rEAX, unsigned *rEBX, unsigned *rECX,
                                  unsigned *rEDX) {
-#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
 #if defined(__x86_64__) || defined(_M_X64)
 #if defined(__GNUC__) || defined(__clang__)
-  // gcc doesn't know cpuid would clobber ebx/rbx. Preseve it manually.
+  // gcc doesn't know cpuid would clobber ebx/rbx. Preserve it manually.
   // FIXME: should we save this for Clang?
   __asm__("movq\t%%rbx, %%rsi\n\t"
           "cpuid\n\t"
           "xchgq\t%%rbx, %%rsi\n\t"
           : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
           : "a"(value), "c"(subleaf));
+  return false;
 #elif defined(_MSC_VER)
   int registers[4];
   __cpuidex(registers, value, subleaf);
@@ -462,6 +463,9 @@ static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
   *rEBX = registers[1];
   *rECX = registers[2];
   *rEDX = registers[3];
+  return false;
+#else
+  return true;
 #endif
 #elif defined(__i386__) || defined(_M_IX86)
 #if defined(__GNUC__) || defined(__clang__)
@@ -470,6 +474,7 @@ static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
           "xchgl\t%%ebx, %%esi\n\t"
           : "=a"(*rEAX), "=S"(*rEBX), "=c"(*rECX), "=d"(*rEDX)
           : "a"(value), "c"(subleaf));
+  return false;
 #elif defined(_MSC_VER)
   __asm {
       mov   eax,value
@@ -484,11 +489,10 @@ static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
       mov   esi,rEDX
       mov   dword ptr [esi],edx
   }
-#endif
-#else
-  assert(0 && "This method is defined only for x86.");
-#endif
   return false;
+#else
+  return true;
+#endif
 #else
   return true;
 #endif
@@ -525,8 +529,8 @@ static void detectX86FamilyModel(unsigned EAX, unsigned *Family,
 }
 
 static void
-getIntelProcessorTypeAndSubtype(unsigned int Family, unsigned int Model,
-                                unsigned int Brand_id, unsigned int Features,
+getIntelProcessorTypeAndSubtype(unsigned Family, unsigned Model,
+                                unsigned Brand_id, unsigned Features,
                                 unsigned *Type, unsigned *Subtype) {
   if (Brand_id != 0)
     return;
@@ -680,12 +684,7 @@ getIntelProcessorTypeAndSubtype(unsigned int Family, unsigned int Model,
     // Skylake Xeon:
     case 0x55:
       *Type = INTEL_COREI7;
-      // Check that we really have AVX512
-      if (Features & (1 << FEATURE_AVX512)) {
-        *Subtype = INTEL_COREI7_SKYLAKE_AVX512; // "skylake-avx512"
-      } else {
-        *Subtype = INTEL_COREI7_SKYLAKE; // "skylake"
-      }
+      *Subtype = INTEL_COREI7_SKYLAKE_AVX512; // "skylake-avx512"
       break;
 
     case 0x1c: // Most 45 nm Intel Atom processors
@@ -707,7 +706,12 @@ getIntelProcessorTypeAndSubtype(unsigned int Family, unsigned int Model,
       *Type = INTEL_ATOM;
       *Subtype = INTEL_ATOM_SILVERMONT;
       break; // "silvermont"
-
+    // Goldmont:
+    case 0x5c:
+    case 0x5f:
+      *Type = INTEL_ATOM;
+      *Subtype = INTEL_ATOM_GOLDMONT;
+      break; // "goldmont"
     case 0x57:
       *Type = INTEL_XEONPHI; // knl
       *Subtype = INTEL_KNIGHTS_LANDING;
@@ -821,10 +825,8 @@ getIntelProcessorTypeAndSubtype(unsigned int Family, unsigned int Model,
   }
 }
 
-static void getAMDProcessorTypeAndSubtype(unsigned int Family,
-                                          unsigned int Model,
-                                          unsigned int Features,
-                                          unsigned *Type,
+static void getAMDProcessorTypeAndSubtype(unsigned Family, unsigned Model,
+                                          unsigned Features, unsigned *Type,
                                           unsigned *Subtype) {
   // FIXME: this poorly matches the generated SubtargetFeatureKV table.  There
   // appears to be no way to generate the wide variety of AMD-specific targets
@@ -906,12 +908,7 @@ static void getAMDProcessorTypeAndSubtype(unsigned int Family,
     break; // "btver1";
   case 21:
     *Type = AMDFAM15H;
-    if (!(Features &
-          (1 << FEATURE_AVX))) { // If no AVX support, provide a sane fallback.
-      *Subtype = AMD_BTVER1;
-      break; // "btver1"
-    }
-    if (Model >= 0x50 && Model <= 0x6f) {
+    if (Model >= 0x60 && Model <= 0x7f) {
       *Subtype = AMDFAM15H_BDVER4;
       break; // "bdver4"; 50h-6Fh: Excavator
     }
@@ -930,30 +927,21 @@ static void getAMDProcessorTypeAndSubtype(unsigned int Family,
     break;
   case 22:
     *Type = AMDFAM16H;
-    if (!(Features &
-          (1 << FEATURE_AVX))) { // If no AVX support provide a sane fallback.
-      *Subtype = AMD_BTVER1;
-      break; // "btver1";
-    }
     *Subtype = AMD_BTVER2;
     break; // "btver2"
   case 23:
     *Type = AMDFAM17H;
-    if (Features & (1 << FEATURE_ADX)) {
-      *Subtype = AMDFAM17H_ZNVER1;
-      break; // "znver1"
-    }
-    *Subtype =  AMD_BTVER1;
+    *Subtype = AMDFAM17H_ZNVER1;
     break;
   default:
     break; // "generic"
   }
 }
 
-static unsigned getAvailableFeatures(unsigned int ECX, unsigned int EDX,
+static unsigned getAvailableFeatures(unsigned ECX, unsigned EDX,
                                      unsigned MaxLeaf) {
   unsigned Features = 0;
-  unsigned int EAX, EBX;
+  unsigned EAX, EBX;
   Features |= (((EDX >> 23) & 1) << FEATURE_MMX);
   Features |= (((EDX >> 25) & 1) << FEATURE_SSE);
   Features |= (((EDX >> 26) & 1) << FEATURE_SSE2);
@@ -981,8 +969,14 @@ static unsigned getAvailableFeatures(unsigned int ECX, unsigned int EDX,
   Features |= (HasAVX512Save << FEATURE_AVX512SAVE);
   Features |= (HasADX << FEATURE_ADX);
 
-  getX86CpuIDAndInfo(0x80000001, &EAX, &EBX, &ECX, &EDX);
-  Features |= (((EDX >> 29) & 0x1) << FEATURE_EM64T);
+  unsigned MaxExtLevel;
+  getX86CpuIDAndInfo(0x80000000, &MaxExtLevel, &EBX, &ECX, &EDX);
+
+  bool HasExtLeaf1 = MaxExtLevel >= 0x80000001 &&
+                     !getX86CpuIDAndInfo(0x80000001, &EAX, &EBX, &ECX, &EDX);
+  if (HasExtLeaf1)
+    Features |= (((EDX >> 29) & 0x1) << FEATURE_EM64T);
+
   return Features;
 }
 
@@ -998,10 +992,9 @@ StringRef sys::getHostCPUName() {
   if(!isCpuIdSupported())
     return "generic";
 #endif
-  if (getX86CpuIDAndInfo(0, &MaxLeaf, &Vendor, &ECX, &EDX))
+  if (getX86CpuIDAndInfo(0, &MaxLeaf, &Vendor, &ECX, &EDX) || MaxLeaf < 1)
     return "generic";
-  if (getX86CpuIDAndInfo(0x1, &EAX, &EBX, &ECX, &EDX))
-    return "generic";
+  getX86CpuIDAndInfo(0x1, &EAX, &EBX, &ECX, &EDX);
 
   unsigned Brand_id = EBX & 0xff;
   unsigned Family = 0, Model = 0;
@@ -1070,6 +1063,8 @@ StringRef sys::getHostCPUName() {
       switch (Subtype) {
       case INTEL_ATOM_BONNELL:
         return "bonnell";
+      case INTEL_ATOM_GOLDMONT:
+        return "goldmont";
       case INTEL_ATOM_SILVERMONT:
         return "silvermont";
       default:
@@ -1486,7 +1481,8 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) { return false; }
 #endif
 
 std::string sys::getProcessTriple() {
-  Triple PT(Triple::normalize(LLVM_HOST_TRIPLE));
+  std::string TargetTripleString = updateTripleOSVersion(LLVM_HOST_TRIPLE);
+  Triple PT(Triple::normalize(TargetTripleString));
 
   if (sizeof(void *) == 8 && PT.isArch32Bit())
     PT = PT.get64BitArchVariant();
